@@ -1,93 +1,74 @@
 import greenfoot.*;
+import java.util.Map;
+import java.util.HashMap;
 
-public abstract class Sprack extends Actor {
-    private final int layerWidth;
-    private final int layerHeight;
-    private final GreenfootImage[] layers;
+public abstract class Sprack extends Sprite {
+    private static final Map<String, SprackView> viewMap;
+    static {
+        Map<String, Integer> sheetInfo = new HashMap<>();
+        sheetInfo.put("car", 9);
+        sheetInfo.put("crate", 16);
+
+        viewMap = new HashMap<>();
+        for (Map.Entry<String, Integer> entry : sheetInfo.entrySet()) {
+            viewMap.put(entry.getKey(), new SprackView(new GreenfootImage(entry.getKey() + ".png"), entry.getValue()));
+        }
+    }
+
+    private final SprackView view;
 
     private double worldX;
     private double worldY;
     private double rotation;
 
-    public Sprack(GreenfootImage layerSheet, int layerCount) {
-        if (layerCount < 1) {
-            throw new IllegalArgumentException("Sprite stack must consist of at least 1 layer");
+    public Sprack(String sheetName) {
+        view = viewMap.get(sheetName);
+        if (view == null) {
+            throw new IllegalArgumentException("No preloaded SprackView for sheet \"" + sheetName + "\" exists");
         }
-        layerWidth = layerSheet.getWidth();
-        layerHeight = layerSheet.getHeight() / layerCount;
-        layers = new GreenfootImage[layerCount];
-        for (int i = 0; i < layers.length; i++) {
-            layers[i] = new GreenfootImage(layerWidth, layerHeight);
-            layers[i].drawImage(layerSheet, 0, -layerHeight * (layerCount - 1 - i));
-        }
-        updateImage();
     }
 
-    public Sprack(String layerSheetPath, int layerCount) {
-        this(new GreenfootImage(layerSheetPath), layerCount);
-    }
-
-    public void act() {
-        updateScreenLocation();
-        if (getX() + getImage().getWidth() / 2 < 0 || getX() - getImage().getWidth() / 2 >= getWorld().getWidth()
-            || getY() + getImage().getHeight() / 2 < 0 || getY() - getImage().getHeight() / 2 >= getWorld().getHeight()) {
-            return;
-        }
-        updateImage();
-    }
-
-    public void updateImage() {
-        double imageDegrees = rotation - Camera.getRotation();
-        double imageRad = Math.toRadians(imageDegrees);
-        double scale = Camera.getZoom();
-        int width = (int) (layerWidth * scale);
-        int height = (int) (layerHeight * scale);
-        if (width <= 0 || height <= 0) {
-            setImage((GreenfootImage) null);
-            return;
-        }
-        int rotWidth = (int) (Math.abs(width * Math.cos(imageRad)) + Math.abs(height * Math.sin(imageRad)));
-        int rotHeight = (int) (Math.abs(width * Math.sin(imageRad)) + Math.abs(height * Math.cos(imageRad)));
-        GreenfootImage image = new GreenfootImage(rotWidth, rotHeight + (int) (layers.length * scale));
-        for (int i = 0; i < layers.length; i++) {
-            GreenfootImage layer = new GreenfootImage(layers[i]);
-            layer.scale(width, height);
-            GreenfootImage rotLayer = new GreenfootImage(rotWidth, rotHeight);
-            rotLayer.drawImage(layer, (rotWidth - width) / 2, (rotHeight - height) / 2);
-            rotLayer.rotate((int) imageDegrees);
-            image.drawImage(rotLayer, 0, (int) (scale * (layers.length - 1 - i)));
-        }
-        setImage(image);
-    }
-
-    public void setSpriteRotation(double angle) {
-        rotation = angle;
-        updateImage();
+    public void setSpriteRotation(double rotation) {
+        this.rotation = Vector2.normalizeAngle(rotation);
     }
 
     public double getSpriteRotation() {
         return rotation;
     }
 
-    @Override
-    public void addedToWorld(World world) {
-        setWorldLocation(getX(), getY());
-    }
-
     public void setWorldLocation(double x, double y) {
         worldX = x;
         worldY = y;
-        updateScreenLocation();
     }
 
-    private void updateScreenLocation() {
+    @Override
+    public void render(GreenfootImage canvas) {
+        // Update screen location, rotated around zoomed camera position
         double scale = Camera.getZoom();
         double offsetX = (worldX - Camera.getX()) * scale;
         double offsetY = (worldY - Camera.getY()) * scale;
         double screenRad = Math.toRadians(-Camera.getRotation());
         double screenX = getWorld().getWidth() / 2 + offsetX * Math.cos(screenRad) - offsetY * Math.sin(screenRad);
         double screenY = getWorld().getHeight() / 2 + offsetX * Math.sin(screenRad) + offsetY * Math.cos(screenRad);
-        setLocation((int) screenX, (int) screenY);
+        setScreenLocation(screenX, screenY);
+
+        // Don't render if offscreen
+        double imageRotation = rotation - Camera.getRotation();
+        int centerX = view.getCenterX(imageRotation, scale);
+        int centerY = view.getCenterY(imageRotation, scale);
+        if (screenX + centerX < 0
+            || screenX - centerX >= getWorld().getWidth()
+            || screenY + (view.getTransformedHeight(imageRotation, scale) - centerY) < 0
+            || screenY - centerY >= getWorld().getHeight()) {
+            return;
+        }
+
+        // Draw image, screen location at center of bottom layer
+        GreenfootImage image = view.getTransformedImage(imageRotation, Camera.getZoom());
+        if (image == null) {
+            return;
+        }
+        canvas.drawImage(image, (int) screenX - centerX, (int) screenY - centerY);
     }
 
     public double getWorldX() {

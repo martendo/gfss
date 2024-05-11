@@ -13,11 +13,11 @@ public class Player extends Sprack {
     private double rotSpeed;
 
     public Player() {
-        super("car.png", 9);
+        super("car");
     }
 
     @Override
-    public void act() {
+    public void update() {
         if (Greenfoot.isKeyDown("left")) {
             rotSpeed -= ROT_ACCEL;
         }
@@ -45,7 +45,5 @@ public class Player extends Sprack {
         double y = getWorldY() + speed * Math.sin(rotation);
         setWorldLocation(x, y);
         Camera.targetLocation(x, y);
-
-        super.act();
     }
 }

@@ -59,11 +59,21 @@ public class Camera {
 
     /**
      * Set the zoom factor of the camera.
+     * <p>
+     * If the given zoom factor is greater than {@link SprackView#IMAGE_CACHE_SCALE},
+     * the camera's zoom factor will be clamped to that value.
      *
      * @return the zoom factor of the camera
+     * @throws IllegalArgumentException if the given zoom factor is negative
      */
     public static void setZoom(double zoom) {
-        Camera.zoom = zoom;
+        if (zoom < 0) {
+            throw new IllegalArgumentException("Zoom factor must not be negative");
+        } else if (zoom > SprackView.IMAGE_CACHE_SCALE) {
+            Camera.zoom = SprackView.IMAGE_CACHE_SCALE;
+        } else {
+            Camera.zoom = zoom;
+        }
     }
 
     /**
@@ -77,8 +87,8 @@ public class Camera {
     public static void resetTo(double x, double y, double rotation, double zoom) {
         Camera.x = x;
         Camera.y = y;
-        Camera.rotation = rotation;
-        Camera.zoom = zoom;
+        Camera.rotation = Vector2.normalizeAngle(rotation);
+        setZoom(zoom);
     }
 
     /**
