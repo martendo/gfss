@@ -20,43 +20,40 @@ public class SprackView {
 	/** All existing SprackView objects for use in the game, mapped by name. */
 	private static final ConcurrentMap<String, SprackView> viewMap = new ConcurrentHashMap<>();
 
+	/** The scale factor of the images within a SprackView object's cache. */
+	public static final double IMAGE_CACHE_SCALE = 8.0;
 	/** The number of different rotation angles, evenly spaced, to make available in the cache. */
-	private static final int IMAGE_CACHE_ANGLE_COUNT = 90;
+	private static final int IMAGE_CACHE_ANGLE_COUNT = 45;
 
 	/**
 	 * Load and cache all SprackView objects to be used in the game.
 	 */
 	public static void loadAll() {
-		new Thread(() -> {
-			Map<String, Integer> sheetInfo = new HashMap<>();
-			sheetInfo.put("car", 9);
-			sheetInfo.put("crate", 16);
-			/*
-			sheetInfo.put("building", 11);
-			sheetInfo.put("tree", 40);
-			sheetInfo.put("monu3", 79);
-			*/
-			sheetInfo.put("log", 16);
-			sheetInfo.put("tower", 200);
+		Map<String, Integer> sheetInfo = new HashMap<>();
+		sheetInfo.put("car", 9);
+		sheetInfo.put("crate", 16);
+		sheetInfo.put("building", 11);
+		sheetInfo.put("tree", 40);
+		sheetInfo.put("tower", 200);
+		sheetInfo.put("monu1", 118);
+		sheetInfo.put("monu2", 126);
+		sheetInfo.put("monu3", 79);
+		sheetInfo.put("castle", 21);
+		sheetInfo.put("teapot", 61);
 
-			ExecutorService service = Executors.newFixedThreadPool(10);
-			for (Map.Entry<String, Integer> entry : sheetInfo.entrySet()) {
-				final String name = entry.getKey();
-				final GreenfootImage sheet = new GreenfootImage(name + ".png");
-				final int layerCount = entry.getValue();
-				service.execute(() -> {
-					System.out.println("start " + name);
-					viewMap.put(name, new SprackView(sheet, layerCount));
-					System.out.println("done " + name);
-				});
-			}
-			service.shutdown();
-			try {
-				service.awaitTermination(Long.MAX_VALUE, TimeUnit.SECONDS);
-			} catch (InterruptedException e) {
-				service.shutdownNow();
-			}
-		}).start();
+		ExecutorService service = Executors.newCachedThreadPool();
+		for (Map.Entry<String, Integer> entry : sheetInfo.entrySet()) {
+			final String name = entry.getKey();
+			final GreenfootImage sheet = new GreenfootImage(name + ".png");
+			final int layerCount = entry.getValue();
+			service.execute(new Test(viewMap, name, sheet, layerCount));
+		}
+		service.shutdown();
+		try {
+			service.awaitTermination(Long.MAX_VALUE, TimeUnit.SECONDS);
+		} catch (InterruptedException e) {
+			service.shutdownNow();
+		}
 	}
 
 	/** The width of an untransformed layer, in pixels. */
@@ -64,24 +61,24 @@ public class SprackView {
 	/** The height of an untransformed layer, in pixels. */
 	private final int layerHeight;
 
-	private static class CacheEntry {
-		private final GreenfootImage image;
-		private final int centerX;
-		private final int centerY;
-
-		private CacheEntry(GreenfootImage image, int centerX, int centerY) {
-			this.image = image;
-			this.centerX = centerX;
-			this.centerY = centerY;
-		}
-	}
-
 	/**
 	 * Images of the sprite stack at different rotation angles. rotCache[i]
 	 * contains the image representing the sprite stack at an angle of
-	 * i / IMAGE_CACHE_ANGLE_COUNT * 360.
+	 * i / IMAGE_CACHE_ANGLE_COUNT * 360, scaled by a factor of IMAGE_CACHE_SCALE.
 	 */
-	private final CacheEntry[] rotCache;
+	private final GreenfootImage[] rotCache;
+
+	/**
+	 * The positional horizontal screen centers of corresponding transformed
+	 * sprite stack images in rotCache, in pixels.
+	 */
+	private final int[] rotCacheCenterX;
+
+	/**
+	 * The positional vertical screen centers of corresponding transformed
+	 * sprite stack images in rotCache, in pixels.
+	 */
+	private final int[] rotCacheCenterY;
 
 	/**
 	 * Create a new cache for a sprite stack created by layering the specified
@@ -101,54 +98,40 @@ public class SprackView {
 		}
 
 		// Create rotated image cache
-		rotCache = new CacheEntry[IMAGE_CACHE_ANGLE_COUNT];
-		ExecutorService service = Executors.newFixedThreadPool(10);
+		rotCache = new GreenfootImage[IMAGE_CACHE_ANGLE_COUNT];
+		rotCacheCenterX = new int[IMAGE_CACHE_ANGLE_COUNT];
+		rotCacheCenterY = new int[IMAGE_CACHE_ANGLE_COUNT];
 		for (int i = 0; i < IMAGE_CACHE_ANGLE_COUNT; i++) {
-			final int index = i;
-			final double rot = 360.0 / IMAGE_CACHE_ANGLE_COUNT * index;
-			service.execute(() -> {
-				rotCache[index] = createCacheEntry(rot, layers, layerWidth, layerHeight);
-			});
+			double imageDegrees = 360.0 / IMAGE_CACHE_ANGLE_COUNT * i;
+			double imageRad = Math.toRadians(imageDegrees);
+			// Get scaled dimensions of layers
+			int width = (int) (layerWidth * IMAGE_CACHE_SCALE);
+			int height = (int) (layerHeight * IMAGE_CACHE_SCALE);
+			// Get rotated and scaled dimensions of layer images
+			int rotWidth = (int) (Math.abs(width * Math.cos(imageRad)) + Math.abs(height * Math.sin(imageRad)));
+			int rotHeight = (int) (Math.abs(width * Math.sin(imageRad)) + Math.abs(height * Math.cos(imageRad)));
+			// Draw layers onto an image
+			GreenfootImage image = new GreenfootImage(rotWidth, rotHeight + (int) (layers.length * IMAGE_CACHE_SCALE));
+			for (int j = 0; j < layers.length; j++) {
+				GreenfootImage layer = new GreenfootImage(layers[j]);
+				layer.scale(width, height);
+				GreenfootImage rotLayer = new GreenfootImage(rotWidth, rotHeight);
+				rotLayer.drawImage(layer, (rotWidth - width) / 2, (rotHeight - height) / 2);
+				rotLayer.rotate((int) imageDegrees);
+				image.drawImage(rotLayer, 0, (int) (IMAGE_CACHE_SCALE * (layers.length - 1 - j)));
+			}
+			rotCache[i] = image;
+			rotCacheCenterX[i] = rotWidth / 2;
+			rotCacheCenterY[i] = image.getHeight() - rotHeight / 2;
 		}
-		service.shutdown();
-		try {
-			service.awaitTermination(Long.MAX_VALUE, TimeUnit.SECONDS);
-		} catch (InterruptedException e) {
-			service.shutdownNow();
-		}
-	}
-
-	public static CacheEntry createCacheEntry(double imageDegrees, GreenfootImage[] layers, int layerWidth, int layerHeight) {
-		double imageRad = Math.toRadians(imageDegrees);
-		// Get rotated dimensions of layer images
-		int rotWidth = (int) (Math.abs(layerWidth * Math.cos(imageRad)) + Math.abs(layerHeight * Math.sin(imageRad)));
-		int rotHeight = (int) (Math.abs(layerWidth * Math.sin(imageRad)) + Math.abs(layerHeight * Math.cos(imageRad)));
-		if (rotWidth < layerWidth) {
-			rotWidth = layerWidth;
-		}
-		if (rotHeight < layerHeight) {
-			rotHeight = layerHeight;
-		}
-		// Draw layers onto an image
-		GreenfootImage image = new GreenfootImage(rotWidth, rotHeight + layers.length);
-		for (int i = 0; i < layers.length; i++) {
-			GreenfootImage rotLayer = new GreenfootImage(rotWidth, rotHeight);
-			rotLayer.drawImage(layers[i], (rotWidth - layerWidth) / 2, (rotHeight - layerHeight) / 2);
-			rotLayer.rotate((int) imageDegrees);
-			image.drawImage(rotLayer, 0, layers.length - 1 - i);
-		}
-		return new CacheEntry(image, rotWidth / 2, image.getHeight() - rotHeight / 2);
 	}
 
 	public static SprackView getView(String sheetName) {
-		/*
 		SprackView view = viewMap.get(sheetName);
 		if (view == null) {
 			throw new IllegalArgumentException("No preloaded SprackView for sheet \"" + sheetName + "\" exists");
 		}
 		return view;
-		*/
-		return viewMap.get(sheetName);
 	}
 
 	/**
@@ -173,9 +156,12 @@ public class SprackView {
 	 * @throws UnsupportedOperationException if the given scale factor is larger than the scale factor of the image cache
 	 */
 	public GreenfootImage getTransformedImage(double rotation, double scale) {
-		GreenfootImage cachedImage = rotCache[getCacheIndex(rotation)].image;
-		int scaledWidth = (int) (cachedImage.getWidth() * scale);
-		int scaledHeight = (int) (cachedImage.getHeight() * scale);
+		if (scale > IMAGE_CACHE_SCALE) {
+			throw new UnsupportedOperationException("Cannot scale stacked sprite larger than cached image scale (got " + scale + ", max in cache " + IMAGE_CACHE_SCALE + ")");
+		}
+		GreenfootImage cachedImage = rotCache[getCacheIndex(rotation)];
+		int scaledWidth = (int) (cachedImage.getWidth() / IMAGE_CACHE_SCALE * scale);
+		int scaledHeight = (int) (cachedImage.getHeight() / IMAGE_CACHE_SCALE * scale);
 		if (scaledWidth <= 0 || scaledHeight <= 0) {
 			return null;
 		}
@@ -196,7 +182,7 @@ public class SprackView {
 	 * @return the width of the image that would be used if the same parameters were passed to {@link #getTransformedImage}
 	 */
 	public int getTransformedWidth(double rotation, double scale) {
-		return (int) (rotCache[getCacheIndex(rotation)].image.getWidth() * scale);
+		return (int) (rotCache[getCacheIndex(rotation)].getWidth() / IMAGE_CACHE_SCALE * scale);
 	}
 
 	/**
@@ -211,7 +197,7 @@ public class SprackView {
 	 * @return the height of the image that would be used if the same parameters were passed to {@link #getTransformedImage}
 	 */
 	public int getTransformedHeight(double rotation, double scale) {
-		return (int) (rotCache[getCacheIndex(rotation)].image.getHeight() * scale);
+		return (int) (rotCache[getCacheIndex(rotation)].getHeight() / IMAGE_CACHE_SCALE * scale);
 	}
 
 	/**
@@ -225,7 +211,7 @@ public class SprackView {
 	 * @return the screen x offset of the sprite stack's center, relative to the image that would be used if the same parameters were passed to {@link #getTransformedImage}
 	 */
 	public int getCenterX(double rotation, double scale) {
-		return (int) (rotCache[getCacheIndex(rotation)].centerX * scale);
+		return (int) (rotCacheCenterX[getCacheIndex(rotation)] / IMAGE_CACHE_SCALE * scale);
 	}
 
 	/**
@@ -240,6 +226,6 @@ public class SprackView {
 	 * @return the screen y offset of the sprite stack's center, relative to the image that would be used if the same parameters were passed to {@link #getTransformedImage}
 	 */
 	public int getCenterY(double rotation, double scale) {
-		return (int) (rotCache[getCacheIndex(rotation)].centerY * scale);
+		return (int) (rotCacheCenterY[getCacheIndex(rotation)] / IMAGE_CACHE_SCALE * scale);
 	}
 }
